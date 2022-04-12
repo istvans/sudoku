@@ -1,0 +1,21 @@
+{
+	"folders":
+	[
+		{
+			"path": "."
+		}
+	],
+	"settings":
+	{
+		"SublimeLinter":
+	    {
+	        "linters":
+	        {
+	        	"clang++":
+		        {
+		            "args": "-std=c++17 -Wall -Isrc/ -fsyntax-only -fno-caret-diagnostics",
+		        }
+	        }
+	    }
+	}
+}
