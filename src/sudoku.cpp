@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <unordered_map>
 
 namespace sudoku
 {
@@ -89,36 +90,125 @@ struct Solver::Private
         }
     }
 
-    struct Box_t
+    class Box_t
     {
+        static const size_t uninitialised = 42;
+    public:
         size_t rowIndex;
         size_t columnIndex;
-        size_t size() const
+        bool needsUpdate;
+
+        Box_t(): rowIndex(uninitialised), columnIndex(uninitialised), needsUpdate(false)
+        {}
+
+        static size_t size()
         {
             return boxSize;
         }
+
+        size_t height() const
+        {
+            assert(rowIndex != uninitialised);
+            return rowIndex + size();
+        }
+
+        size_t width() const
+        {
+            assert(columnIndex != uninitialised);
+            return columnIndex + size();
+        }
+
+        bool isUninitialised() const
+        {
+            return (rowIndex == uninitialised) || (columnIndex == uninitialised);
+        }
+
+        size_t update(Solver& self)
+        {
+            size_t numFilledCells = 0;
+
+            auto cellsOfValue = std::unordered_map<char, std::vector<std::pair<size_t, size_t>>>();
+            for (char v = '1'; v <= maxValue; ++v)
+            {
+                cellsOfValue.emplace(v, decltype(cellsOfValue)::mapped_type());
+
+                for (auto i = rowIndex; i < height(); ++i) {
+                    for (auto j = columnIndex; j < width(); ++j) {
+                        auto& boxCell = self.state[i][j];
+                        if (boxCell.count(v) == 1) {
+                            cellsOfValue[v].emplace_back(i, j);
+                        }
+                    }
+                }
+
+                if (cellsOfValue[v].size() == 1) {
+                    auto [i, j] = cellsOfValue[v][0];
+                    auto& cell = self.state[i][j];
+                    if (cell.size() > 1) {
+                        // only a single cell has v as a potential value, but that cell
+                        // has still other values listed as potential values
+                        // let's write `v` into that cell
+                        cell.clear();
+                        cell.emplace(v);
+                        ++numFilledCells;
+                    }
+                }
+            }
+
+            return numFilledCells;
+        }
+
+        static size_t box_index_of_cell_index(size_t cellIndex)
+        {
+            return cellIndex / size();
+        }
+
+        static size_t box_index_of_cell(size_t rowIndex, size_t columnIndex)
+        {
+            const auto boxRowIndex = box_index_of_cell_index(rowIndex);
+            const auto boxColIndex = box_index_of_cell_index(columnIndex);
+            return boxRowIndex * size() + boxColIndex;
+        }
     };
 
-    static Box_t box_for_cell_index(size_t rowIndex, size_t columnIndex)
+    using boxes_t = std::vector<Box_t>;
+    static boxes_t boxes;
+
+    static Box_t& box_for_cell_index(size_t rowIndex, size_t columnIndex)
     {
-        auto box = Box_t();
-        auto boxRowIndex = (rowIndex / box.size());
-        box.rowIndex = boxRowIndex * box.size();
-        auto boxColumnIndex = (columnIndex / box.size());
-        box.columnIndex = boxColumnIndex * box.size();
+        const auto boxIndex = Box_t::box_index_of_cell(rowIndex, columnIndex);
+        auto& box = boxes[boxIndex];
+        if (box.isUninitialised()) {
+            const auto boxRowIndex = Box_t::box_index_of_cell_index(rowIndex);
+            box.rowIndex = boxRowIndex * box.size();
+            const auto boxColumnIndex =  Box_t::box_index_of_cell_index(columnIndex);
+            box.columnIndex = boxColumnIndex * box.size();
+        }
+
         return box;
     }
 
-    /// FIXME I think this should really work very differently
     static void updateCellFromBox(Solver& self, cell_t& cell, size_t rowIndex, size_t columnIndex)
     {
-        const auto box = box_for_cell_index(rowIndex, columnIndex);
-        for (auto i = box.rowIndex; i < (box.rowIndex + box.size()); ++i) {
-            for (auto j = box.columnIndex; j < (box.columnIndex + box.size()); ++j) {
+        const auto& box = box_for_cell_index(rowIndex, columnIndex);
+        for (auto i = box.rowIndex; i < box.height(); ++i) {
+            for (auto j = box.columnIndex; j < box.width(); ++j) {
                 const auto& otherCell = self.state[i][j];
                 eraseConflictInDestinationCell(otherCell, cell);
             }
         }
+    }
+
+    static size_t updateMarkedBoxes(Solver& self)
+    {
+        size_t numFilledCells = 0;
+        for (auto& box: boxes) {
+            if (box.needsUpdate) {
+                numFilledCells += box.update(self);
+                box.needsUpdate = false;
+            }
+        }
+        return numFilledCells;
     }
 
     static void updateCells(Solver& self)
@@ -134,10 +224,16 @@ struct Solver::Private
 
                     if (cell.size() == 1) {
                         --self.remaining;
+                    } else {
+                        auto& box = box_for_cell_index(i, j);
+                        box.needsUpdate = true;
                     }
                 }
             }
         }
+
+        self.remaining -= updateMarkedBoxes(self);
+
         if (remainingBeforeUpdate == self.remaining) {
             throw IAmStuck("The last update was ineffective. Remaining: " +
                 std::to_string(self.remaining) + " (" + std::to_string(percentUnknown(self)) + "%)");
@@ -245,6 +341,9 @@ struct Solver::Private
         std::cout << "╢\n";
     }
 };
+
+Solver::Private::boxes_t Solver::Private::boxes = Solver::Private::boxes_t(numBoxes);
+
 
 void Solver::solve(board_t& board) {
     Private::createState(*this, board);

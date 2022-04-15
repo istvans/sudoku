@@ -13,7 +13,9 @@ class Solver
     using cell_t = std::unordered_set<char>;
     using state_t = std::vector<std::vector<cell_t>>;
 
+    static const char maxValue = '9';
     static const size_t boxSize = 3;
+    static const size_t numBoxes = 9;
     static const size_t numRows = 9;
     static const size_t numColumns = 9;
     static const size_t numElements = numRows * numColumns;
