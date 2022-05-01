@@ -10,6 +10,8 @@
 namespace sudoku
 {
 
+using cell_t = types::cell_t;
+
 Solver::Exception::~Exception() noexcept
 {}
 
@@ -24,13 +26,13 @@ struct Solver::Private
 
     static void eraseState(Solver& self)
     {
-        self.state.clear();
-        self.remaining = 0;
+        self.state.erase();
+        self.forkStates.reset();
     }
 
     static percent_t unknownPercent(const Solver& self)
     {
-        return static_cast<percent_t>(self.remaining) / numElements * 100.0;
+        return static_cast<percent_t>(self.state.remaining) / numElements * 100.0;
     }
 
     static void createState(Solver& self, const board_t& board)
@@ -38,16 +40,16 @@ struct Solver::Private
         eraseState(self);
 
         for (auto i = 0; i < board.size(); ++i) {
-            self.state.emplace_back();
+            self.state.cells.emplace_back();
             for (auto j = 0; j < board[i].size(); ++j) {
-                self.state[i].emplace_back();
+                self.state.cells[i].emplace_back();
                 if (board[i][j] == '.') {
-                    ++self.remaining;
+                    ++self.state.remaining;
                     for (auto k = 0; k < 9; ++k) {
-                        self.state[i][j].emplace('1' + k);
+                        self.state.cells[i][j].emplace('1' + k);
                     }
                 } else {
-                    self.state[i][j].emplace(board[i][j]);
+                    self.state.cells[i][j].emplace(board[i][j]);
                 }
             }
         }
@@ -56,9 +58,9 @@ struct Solver::Private
     static bool solved(const Solver& self)
     {
         bool result = true;
-        for (auto i = 0; i < self.state.size(); ++i) {
-            for (auto j = 0; j < self.state[i].size(); ++j) {
-                if (self.state[i][j].size() != 1) {
+        for (auto i = 0; i < self.state.cells.size(); ++i) {
+            for (auto j = 0; j < self.state.cells[i].size(); ++j) {
+                if (self.state.cells[i][j].size() != 1) {
                     result = false;
                     break;
                 }
@@ -77,7 +79,7 @@ struct Solver::Private
 
     static void updateCellFromRow(Solver& self, cell_t& cell, size_t rowIndex)
     {
-        const auto& row = self.state[rowIndex];
+        const auto& row = self.state.cells[rowIndex];
         for (const auto& otherCell: row) {
             eraseConflictInDestinationCell(otherCell, cell);
         }
@@ -85,8 +87,8 @@ struct Solver::Private
 
     static void updateCellFromColumn(Solver& self, cell_t& cell, size_t columnIndex)
     {
-        for (auto rowIndex = 0; rowIndex < self.state.size(); ++rowIndex) {
-            const auto& otherCell = self.state[rowIndex][columnIndex];
+        for (auto rowIndex = 0; rowIndex < self.state.cells.size(); ++rowIndex) {
+            const auto& otherCell = self.state.cells[rowIndex][columnIndex];
             eraseConflictInDestinationCell(otherCell, cell);
         }
     }
@@ -135,7 +137,7 @@ struct Solver::Private
 
                 for (auto i = rowIndex; i < height(); ++i) {
                     for (auto j = columnIndex; j < width(); ++j) {
-                        auto& boxCell = self.state[i][j];
+                        auto& boxCell = self.state.cells[i][j];
                         if (boxCell.count(v) == 1) {
                             cellsOfValue[v].emplace_back(i, j);
                         }
@@ -144,7 +146,7 @@ struct Solver::Private
 
                 if (cellsOfValue[v].size() == 1) {
                     auto [i, j] = cellsOfValue[v][0];
-                    auto& cell = self.state[i][j];
+                    auto& cell = self.state.cells[i][j];
                     if (cell.size() > 1) {
                         // only a single cell has v as a potential value, but that cell
                         // has still other values listed as potential values
@@ -194,7 +196,7 @@ struct Solver::Private
         const auto& box = box_for_cell_index(rowIndex, columnIndex);
         for (auto i = box.rowIndex; i < box.height(); ++i) {
             for (auto j = box.columnIndex; j < box.width(); ++j) {
-                const auto& otherCell = self.state[i][j];
+                const auto& otherCell = self.state.cells[i][j];
                 eraseConflictInDestinationCell(otherCell, cell);
             }
         }
@@ -212,19 +214,19 @@ struct Solver::Private
         return numFilledCells;
     }
 
-    static void updateCells(Solver& self)
+    static bool updateCells(Solver& self)
     {
-        const auto remainingBeforeUpdate = self.remaining;
-        for (auto i = 0; i < self.state.size(); ++i) {
-            for (auto j = 0; j < self.state[i].size(); ++j) {
-                auto& cell = self.state[i][j];
+        const auto remainingBeforeUpdate = self.state.remaining;
+        for (auto i = 0; i < self.state.cells.size(); ++i) {
+            for (auto j = 0; j < self.state.cells[i].size(); ++j) {
+                auto& cell = self.state.cells[i][j];
                 if (cell.size() != 1) {
                     updateCellFromRow(self, cell, i);
                     updateCellFromColumn(self, cell, j);
                     updateCellFromBox(self, cell, i, j);
 
                     if (cell.size() == 1) {
-                        --self.remaining;
+                        --self.state.remaining;
                     } else {
                         auto& box = box_for_cell_index(i, j);
                         box.needsUpdate = true;
@@ -233,19 +235,16 @@ struct Solver::Private
             }
         }
 
-        self.remaining -= updateMarkedBoxes(self);
+        self.state.remaining -= updateMarkedBoxes(self);
 
-        if (remainingBeforeUpdate == self.remaining) {
-            throw IAmStuck("The last update was ineffective. Remaining: " +
-                std::to_string(self.remaining) + " (" + std::to_string(unknownPercent(self)) + "%)");
-        }
+        return remainingBeforeUpdate != self.state.remaining;
     }
 
     static void updateBoardFromState(std::vector<std::vector<char>>& board, const state_t& state)
     {
         for (auto i = 0; i < board.size(); ++i) {
             for (auto j = 0; j < board[i].size(); ++j) {
-                board[i][j] = utils::getSingleCellValue(state[i][j]);
+                board[i][j] = utils::getSingleCellValue(state.cells[i][j]);
             }
         }
     }
@@ -257,18 +256,91 @@ Solver::Private::boxes_t Solver::Private::boxes = Solver::Private::boxes_t(numBo
 Solver::Solver(board_t& board)
     : currentBoard(board)
 {
-    Private::createState(*this, this->currentBoard);
+    Private::createState(*this, currentBoard);
+}
+
+bool Solver::ForkStates::isExhausted()
+{
+    return exhausted;
+}
+
+bool Solver::ForkStates::isAlreadyForked()
+{
+    return alreadyForked;
+}
+
+bool Solver::ForkStates::findForkStates(const types::state_t& state)
+{
+    for (auto row = 0; row < state.cells.size(); ++row) {
+        for (auto col = 0; col < state.cells[row].size(); ++col) {
+            if (state.cells[row][col].size() == 2) {
+                for (auto value: state.cells[row][col]) {
+                    forks.push_back(state);  // yes, this is a copy
+                    forks.back().cells[row][col].clear();
+                    forks.back().cells[row][col].emplace(value);
+                    --forks.back().remaining;
+                }
+            }
+        }
+    }
+
+    alreadyForked = true;
+
+    forksIter = forks.begin();
+
+    return !forks.empty();
+}
+
+auto Solver::ForkStates::nextForkState()
+{
+    auto next = forksIter;
+    ++forksIter;
+    if (forksIter == forks.end()) {
+        exhausted = true;
+    }
+    return *next;
+}
+
+void Solver::ForkStates::reset()
+{
+    forks.clear();
+    exhausted = false;
+    alreadyForked = false;
+    forksIter = forks.end();
+}
+
+size_t Solver::ForkStates::count() const
+{
+    return forks.size();
 }
 
 Solver::board_t Solver::solve()
 {
     while (!Private::solved(*this)) {
-        Private::updateCells(*this);
+        const auto updated = Private::updateCells(*this);
+        if (!updated) {
+            if (forkStates.isExhausted()) {
+                state = backupState;
+                throw IAmStuck("I tried " + std::to_string(forkStates.count()) +
+                    " forked states but still got stuck. Remaining: " +
+                    std::to_string(state.remaining) + " (" + std::to_string(unknownPercent()) + "%)");
+            } else if (forkStates.isAlreadyForked()) {
+                state = forkStates.nextForkState();
+            } else {
+                if (forkStates.findForkStates(state)) {
+                    backupState = state;
+                    state = forkStates.nextForkState();
+                } else {
+                    throw IAmStuck("I can't find a suitable next step. Remaining: " +
+                        std::to_string(state.remaining) + " (" + std::to_string(unknownPercent()) + "%)");
+                }
+            }
+        }
     }
 
-    Private::updateBoardFromState(this->currentBoard, state);
+    Private::updateBoardFromState(currentBoard, state);
 
-    return this->currentBoard;
+    return currentBoard;
 }
 
 void Solver::printState(bool useSimpleFormat) const
@@ -278,7 +350,7 @@ void Solver::printState(bool useSimpleFormat) const
 
 Solver::remaining_t Solver::unknownCount() const
 {
-    return this->remaining;
+    return state.remaining;
 }
 
 Solver::percent_t Solver::unknownPercent() const

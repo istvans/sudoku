@@ -13,12 +13,28 @@ namespace sudoku
 
 class Solver
 {
-    using cell_t = types::cell_t;
     using state_t = types::state_t;
 
+    class ForkStates
+    {
+        using forks_t = std::vector<types::state_t>;
+        forks_t forks;
+        bool exhausted = false;
+        bool alreadyForked = false;
+        forks_t::iterator forksIter = forks.end();
+    public:
+        bool isExhausted();
+        bool isAlreadyForked();
+        bool findForkStates(const types::state_t& state);
+        auto nextForkState();
+        void reset();
+        size_t count() const;
+    };
+
     types::board_t currentBoard;
+    ForkStates forkStates;
+    state_t backupState;
     state_t state;
-    types::remaining_t remaining;
     struct Private;
 
 public:

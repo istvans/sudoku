@@ -3,6 +3,6 @@
 namespace sudoku
 {
 
-Interface::~Interface() {}
+Interface::~Interface() noexcept {}
 
 }  // namespace sudoku

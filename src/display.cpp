@@ -67,15 +67,15 @@ static BoxStrings generateBoxStrings(const state_t& state, bool useSimpleFormat)
 
     std::stringstream stream;
     size_t numProcessedElements = 0;
-    for (auto i = 0; i < state.size(); ++i) {
-        for (auto j = 0; j < state[i].size(); ++j) {
-            if (state[i][j].size() == 1) {
-                stream << utils::getSingleCellValue(state[i][j]);
+    for (auto i = 0; i < state.cells.size(); ++i) {
+        for (auto j = 0; j < state.cells[i].size(); ++j) {
+            if (state.cells[i][j].size() == 1) {
+                stream << utils::getSingleCellValue(state.cells[i][j]);
             } else if (useSimpleFormat) {
                 stream << '.';
             } else {
                 stream << '@';
-                auto& possible_values = state[i][j];
+                auto& possible_values = state.cells[i][j];
                 for (auto it = possible_values.begin(); it != possible_values.end(); ++it) {
                     stream << *it;
                     if (std::next(it) != possible_values.end()) {
